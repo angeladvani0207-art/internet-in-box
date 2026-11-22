@@ -1,0 +1,218 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Internet in a Box</title>
+<style>
+:root{--bg:#f4f5f8;--card:#fff;--tx:#0f172a;--mu:#64748b;--bd:#dbe0e8;--ac:#2563eb;--ok:#16a34a;--bad:#dc2626;
+box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#0b1020;--card:#131a2e;--tx:#e2e8f0;--mu:#8795ad;--bd:#252f48;--ac:#60a5fa;--ok:#4ade80;--bad:#f87171}}
+:root[data-theme="dark"]{--bg:#0b1020;--card:#131a2e;--tx:#e2e8f0;--mu:#8795ad;--bd:#252f48;--ac:#60a5fa;--ok:#4ade80;--bad:#f87171}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--tx);font:14px/1.5 system-ui,-apple-system,Segoe UI,Roboto,sans-serif}
+.w{max-width:1320px;margin:0 auto;padding:16px}
+h1{font-size:22px;margin:0}.sub{color:var(--mu);margin:2px 0 12px}
+.card{background:var(--card);border:1px solid var(--bd);border-radius:10px;padding:12px;margin-bottom:12px}
+h2{font-size:12px;letter-spacing:.08em;text-transform:uppercase;color:var(--mu);margin:0 0 8px}
+canvas{width:100%;height:auto;aspect-ratio:1280/560;display:block;background:#0f172a;border-radius:8px;cursor:pointer}
+.row{display:flex;flex-wrap:wrap;gap:10px;align-items:center}
+button{background:var(--card);color:var(--tx);border:1px solid var(--bd);border-radius:7px;padding:7px 13px;font:inherit;font-weight:600;cursor:pointer}
+button.p{background:var(--ac);color:#0b1020;border-color:var(--ac)}
+label{display:flex;flex-direction:column;font-size:12px;color:var(--mu);gap:2px;min-width:130px}
+label.c{flex-direction:row;align-items:center;gap:6px;min-width:0;color:var(--tx)}
+.st{display:grid;grid-template-columns:repeat(auto-fit,minmax(105px,1fr));gap:8px}
+.st div{background:var(--bg);border-radius:8px;padding:7px 10px}.st b{display:block;font-size:19px;font-variant-numeric:tabular-nums}.st span{font-size:11px;color:var(--mu)}
+#cap{min-height:22px;margin-top:8px;font-weight:600;color:var(--ac)}
+.leg{display:flex;flex-wrap:wrap;gap:14px;font-size:12px;color:var(--mu);margin-top:6px}.leg i{display:inline-block;width:9px;height:9px;border-radius:50%;margin-right:5px}
+.g{display:grid;grid-template-columns:minmax(0,5fr) minmax(0,7fr);gap:12px}@media(max-width:900px){.g{grid-template-columns:1fr}}
+.scroll{overflow-x:auto}table{width:100%;border-collapse:collapse;font-size:12.5px}th,td{padding:5px 8px;border-bottom:1px solid var(--bd);text-align:left;white-space:nowrap}th{color:var(--mu);font-weight:600}
+.tag{font-size:11px;padding:1px 6px;border-radius:4px;background:var(--bg);color:var(--mu)}
+#log{height:170px;overflow:auto;font:12px/1.55 ui-monospace,Menlo,monospace;color:var(--mu)}#log b{color:var(--tx)}
+.ins h3{margin:0;font-size:17px}.ins p{margin:6px 0}.kv{display:grid;grid-template-columns:auto 1fr;gap:2px 12px;font-size:13px}.kv span:nth-child(odd){color:var(--mu)}
+</style></head><body><div class="w">
+<h1>Internet in a Box</h1>
+<p class="sub">A working model of the path a web request takes: home NAT, ISP edge, BGP/IGP backbone, DNS recursion, firewall, load balancer and web servers. Click a node to inspect it. Click a cable to cut or restore it.</p>
+<div class="card"><div class="row">
+<button class="p" id="load">Load page</button><button id="demo">Failover demo</button><button id="pause">Pause</button><button id="reset">Reset</button><button id="trc">Traceroute PC→S1</button>
+<label>Link capacity <input type="range" id="cp" min="8" max="50" value="24"></label>
+<label>Cross-traffic (ISP→LB) <input type="range" id="bg" min="0" max="60" value="0"></label>
+<label class="c"><input type="checkbox" id="ad" checked>Congestion-aware routing</label>
+<label class="c"><input type="checkbox" id="fw">Firewall denies tcp/443</label>
+<label class="c"><input type="checkbox" id="au">Auto-load pages</label>
+</div></div>
+<div class="card"><canvas id="c"></canvas><div id="cap"></div>
+<div class="leg"><span><i style="background:#34d399"></i>DNS (UDP/53)</span><span><i style="background:#fbbf24"></i>TCP handshake</span><span><i style="background:#c084fc"></i>TLS</span><span><i style="background:#38bdf8"></i>HTTP</span><span><i style="background:#94a3b8"></i>cross-traffic</span><span><i style="background:#f472b6"></i>ICMP (traceroute)</span><span>Packet size = dot size</span><span>Cable: grey idle · green active · amber/red queue filling · dashed red cut</span></div></div>
+<div class="card"><div class="st">
+<div><b id="s1">0</b><span>pages loaded</span></div><div><b id="s2">0</b><span>pages failed</span></div><div><b id="s3">–</b><span>avg page load (model ms)</span></div>
+<div><b id="s4">0</b><span>packets sent</span></div><div><b id="s5">0</b><span>delivered</span></div><div><b id="s6">0</b><span>dropped</span></div><div><b id="s7">0</b><span>TCP retransmits</span></div></div></div>
+<div class="card"><h2>Packet X-ray (tracked packet, white ring on the canvas)</h2><div id="xr" class="kv"></div></div>
+<div class="g"><div class="card ins"><h2>Component inspector</h2><div id="ins"></div></div>
+<div class="card"><h2>Request trace (latest page load)</h2><div class="scroll"><table id="tr"></table></div></div></div>
+<div class="card"><h2>Event log</h2><div id="log"></div></div>
+</div>
+<script>
+const W=1280,H=560,QMAX=16,cv=document.getElementById('c'),cx=cv.getContext('2d');cv.width=W*2;cv.height=H*2;
+const $=id=>document.getElementById(id);
+const TC={host:'#38bdf8',cpe:'#a78bfa',rtr:'#818cf8',dns:'#34d399',fw:'#f87171',lb:'#fbbf24',srv:'#2dd4bf'};
+const KC={DNS:'#34d399',TCP:'#fbbf24',TLS:'#c084fc',HTTP:'#38bdf8',BG:'#94a3b8',ICMP:'#f472b6'};
+const T3D='Backbone transit router. Learns inter-AS routes with BGP and runs an IGP (OSPF/IS-IS) inside the AS. This model uses link-state shortest path (Dijkstra) and recomputes within ~0.4 s of a failure. Queues absorb bursts and tail-drop when full.';
+const NS={
+PC:[75,330,'Client','Laptop · browser','192.168.1.20','host','L7 to L1','Runs the browser and OS network stack. Resolves names with its stub resolver, opens TCP connections, negotiates TLS and sends HTTP. Address, gateway and DNS server come from the home router via DHCP.'],
+RT:[235,330,'Home router','CPE · NAT · DHCP','192.168.1.1 / 203.0.113.7','cpe','L4 to L1','Customer-premises router. NAT/PAT rewrites private 192.168.1.x sources to one public address and tracks each flow in a translation table so replies find their way back. Also provides DHCP, Wi-Fi and the default route.'],
+ISP:[395,330,'ISP edge','Provider edge router','203.0.113.1','rtr','L3','Aggregates subscribers, shapes traffic per plan and peers with upstream transit ASes over BGP. Forwards each packet by longest-prefix match in its FIB.'],
+DNS:[395,120,'DNS resolver','Recursive · cached','203.0.113.53','dns','L7 (UDP/53)','On a cache miss it queries authoritative servers iteratively (root, TLD, then the zone owner) and caches the answer for its TTL, so repeat lookups cost one round trip.'],
+T1:[570,185,'Transit R1','Backbone · BGP/IGP','10.0.0.1','rtr','L3',T3D],T2:[570,455,'Transit R2','Backbone · BGP/IGP','10.0.0.2','rtr','L3',T3D],T3:[740,320,'Transit R3','Backbone · BGP/IGP','10.0.0.3','rtr','L3',T3D],
+AUTH:[740,95,'Authoritative DNS','example.com zone','192.0.2.53','dns','L7 (UDP/53)','Holds the zone file and returns the final A record. It is the source of truth that recursive resolvers cache.'],
+FW:[925,320,'Firewall','Stateful · ACL','198.51.100.1','fw','L4 to L3','Tracks connection state and applies ACLs by protocol and port. Tick the firewall option to deny tcp/443: DNS and the TCP handshake still work but TLS and HTTP are dropped, which shows why port-level filtering matters.'],
+LB:[1065,320,'Load balancer','VIP 198.51.100.10','198.51.100.10','lb','L4/L7','Owns the virtual IP and picks a backend per new connection (round-robin here). Health checks remove failed servers from rotation.'],
+S1:[1210,215,'Web server 1','TLS · HTTP · app','10.1.0.11','srv','L7','Terminates TLS, parses HTTP and sends the response as several TCP segments. A lost segment is retransmitted after a timeout (RTO) with exponential backoff.'],
+S2:[1210,425,'Web server 2','TLS · HTTP · app','10.1.0.12','srv','L7','Second backend behind the load balancer. Successive page loads alternate between S1 and S2.']};
+const ids=Object.keys(NS);ids.forEach(i=>NS[i].push({fwd:0,drops:0}));
+const LK=[['PC','RT',1,1.5],['RT','ISP',8,.5],['ISP','DNS',2,1.5],['ISP','T1',12,1],['ISP','T2',14,1],['T1','T2',6,1],['T1','T3',10,1],['T2','T3',10,1],['T1','AUTH',9,1],['T3','FW',5,1],['T2','FW',22,.6],['FW','LB',1,1.5],['LB','S1',1,1.5],['LB','S2',1,1.5]];
+let links,nh,dist,S,tm=0,rt=0,paused=false,sel='ISP',cur=null,sched=[],fx=[],rr=0,bgacc=0,lastP='',autoT=0,demoT=[],pid=0,sid=0,trk=null,dnsUntil=0;
+const px=n=>NS[n];
+function init(){
+ links=LK.map(([a,b,ms,cf])=>({a,b,ms,cf,down:false,d:[{q:[],fl:[],acc:0},{q:[],fl:[],acc:0}]}));
+ ids.forEach(i=>{NS[i][8].fwd=0;NS[i][8].drops=0});
+ S={ok:0,fail:0,load:0,sent:0,del:0,x:0,rtx:0};sched=[];fx=[];cur=null;lastP='';dnsUntil=0;trk=null;route();
+}
+function cost(l){return l.ms/50+($('ad').checked?(l.d[0].q.length+l.d[1].q.length)*.03:0)}
+function route(){
+ nh={};dist={};ids.forEach(n=>nh[n]={});
+ ids.forEach(dst=>{const D={},sn={};ids.forEach(n=>D[n]=1e9);D[dst]=0;
+  for(let i=0;i<ids.length;i++){let u=null;ids.forEach(n=>{if(!sn[n]&&(u===null||D[n]<D[u]))u=n});
+   if(D[u]>=1e9)break;sn[u]=1;
+   links.forEach(l=>{if(l.down)return;const v=l.a===u?l.b:l.b===u?l.a:null;if(!v)return;const nd=D[u]+cost(l);if(nd<D[v]){D[v]=nd;nh[v][dst]=u}})}
+  dist[dst]=D});
+ const p=path('PC','S1').join(' > ');if(p!==lastP){if(lastP)log(`Routing converged. PC to S1 now: <b>${p||'unreachable'}</b>`);lastP=p}
+}
+function path(s,d){const p=[s];let n=s,g=0;while(n!==d&&g++<14){n=nh[n][d];if(!n)return[];p.push(n)}return p}
+const lb=(a,b)=>links.find(l=>(l.a===a&&l.b===b)||(l.a===b&&l.b===a));
+function log(t){const d=document.createElement('div');d.innerHTML=`[${tm.toFixed(1)}s] ${t}`;const L=$('log');L.appendChild(d);L.scrollTop=L.scrollHeight}
+function enqueue(node,p){
+ if(node==='FW'&&$('fw').checked&&(p.k==='TLS'||p.k==='HTTP'))return drop(p,node,'firewall ACL denied tcp/443');
+ NS[node][8].fwd++;p.at=node;p.st='queued at '+node;if(node==='RT'){if(p.src==='PC')p.nat=1;else if(p.dst==='PC')p.nat=0}
+ const nx=nh[node][p.dst];if(!nx)return drop(p,node,'no route to host');
+ const l=lb(node,nx),q=l.d[l.a===node?0:1].q;
+ if(q.length>=QMAX)return drop(p,node,`queue overflow on ${l.a}-${l.b}`);
+ q.push(p);
+}
+function drop(p,node,why){p.st='dropped at '+node+' ('+why+')';
+ S.x++;NS[node][8].drops++;fx.push({x:px(node)[0],y:px(node)[1],t:0});
+ if(!p.sess)return;
+ if(p.t===0||p.t===undefined)p.t=0;p.t++;
+ if(p.t>5){fail(p.sess,p.step,why);return}
+ if(p.t===1)log(`Drop at <b>${node}</b>: ${why}. TCP will retry`);
+ sched.push({at:tm+.9*2**(p.t-1),fn:()=>{if(!p.sess.dead){S.rtx++;S.sent++;p.ttl=64;p.hops=0;p.nat=undefined;enqueue(p.src,p)}}});
+}
+function fail(s,i,why){if(s.dead)return;s.dead=1;s.steps[i].fail=1;S.fail++;log(`<span style="color:var(--bad)">Page load failed</span> at step ${i+1}: ${why}`)}
+function begin(s){const t=s.steps[s.i];t.t0=tm;t.got=0;t.on=1;const sz={DNS:90,TCP:60,TLS:700,HTTP:t.c>1?1500:420}[t.k];for(let j=0;j<t.c;j++){S.sent++;const p={k:t.k,src:t.a,dst:t.b,sess:s,step:s.i,t:0,sz,ttl:64,hops:0,id:++pid};if(j===0)trk=p;enqueue(t.a,p)}}
+function deliver(p,node){
+ S.del++;p.st='delivered to '+node;fx.push({x:px(node)[0],y:px(node)[1],t:0,ok:1});if(p.k==='ICMP'){if(p.tr.probe)icmp(node,p,1);else log('traceroute hop '+p.tr.i+': <b>'+p.tr.from+'</b> ('+NS[p.tr.from][4].split(' ')[0]+') '+Math.round((tm-p.tr.t0)*50)+' ms'+(p.tr.end?' (destination reached)':''));return}if(!p.sess)return;
+ const s=p.sess,t=s.steps[p.step];if(s.dead||t.dn)return;t.got++;
+ if(t.got>=t.c){t.dn=1;t.ms=(tm-t.t0)*50;if(t.proto==='UDP/53'&&t.b==='PC')dnsUntil=tm+45;sched.push({at:tm+(t.proc||.05),fn:()=>{if(s.dead)return;s.i++;
+  if(s.i>=s.steps.length){S.ok++;const ms=(tm-s.t0)*50;S.load+=ms;log(`<span style="color:var(--ok)">Page loaded</span> in <b>${Math.round(ms)} ms</b> via ${s.srv}`)}else begin(s)}})}
+}
+function load(){
+ const srv=rr++%2?'S2':'S1';log(`New page load. LB (VIP 198.51.100.10) picks <b>${srv}</b> (round-robin)`);
+ const m=(k,a,b,proto,note,c=1,proc)=>({k,a,b,proto,note,c,proc});
+ const s={t0:tm,i:0,srv,steps:[
+  m('DNS','PC','DNS','UDP/53','A? shop.example.com'),
+  m('DNS','DNS','AUTH','UDP/53','Cache miss: ask authoritative NS',1,.15),
+  m('DNS','AUTH','DNS','UDP/53','A 198.51.100.10, TTL 300'),
+  m('DNS','DNS','PC','UDP/53','Answer cached and returned'),
+  m('TCP','PC',srv,'TCP SYN','Open connection (NAT at home router)'),
+  m('TCP',srv,'PC','TCP SYN-ACK','Server accepts, seq/ack agreed'),
+  m('TCP','PC',srv,'TCP ACK','Connection established'),
+  m('TLS','PC',srv,'TLS ClientHello','Cipher suites, SNI'),
+  m('TLS',srv,'PC','TLS ServerHello','Certificate and key share',2,.1),
+  m('HTTP','PC',srv,'HTTP GET','GET / HTTP/1.1'),
+  m('HTTP',srv,'PC','HTTP 200','HTML in 4 TCP segments',4,.1)]};
+ s.id=++sid;if(tm<dnsUntil){s.steps.splice(0,4);log('DNS answer served from cache (TTL still valid): lookup skipped')}cur=s;begin(s);
+}
+function setDown(l,v){l.down=v;
+ if(v)l.d.forEach((d,i)=>{const lost=[...d.q,...d.fl.map(x=>x.p)];d.q=[];d.fl=[];lost.forEach(p=>drop(p,i?l.b:l.a,'cable cut, packet lost in flight'))});
+ log(`Cable <b>${l.a}-${l.b}</b> ${v?'<span style="color:var(--bad)">CUT</span>':'<span style="color:var(--ok)">restored</span>'}. Routers flood the change and re-run SPF`);route();
+}
+function icmp(n,p,end){S.sent++;enqueue(n,{k:'ICMP',src:n,dst:p.src,sz:80,ttl:64,hops:0,id:++pid,tr:{i:p.tr.i,from:n,t0:p.tr.t0,end}})}
+function hop(p,n){p.hops++;p.ttl--;if(p.ttl<=0){p.st='TTL expired at '+n;if(p.tr&&p.tr.probe)icmp(n,p,0);return}enqueue(n,p)}
+function trace(){const n=path('PC','S1').length-1;log('traceroute to S1: probes with TTL 1..'+n+'. Each router that drops TTL to 0 answers with ICMP Time Exceeded');for(let i=1;i<=n;i++)sched.push({at:tm+i*.4,fn:()=>{S.sent++;const p={k:'ICMP',src:'PC',dst:'S1',sz:64,ttl:i,hops:0,id:++pid,tr:{i,t0:tm,probe:1}};trk=p;enqueue('PC',p)}})}
+function xr(){const p=trk,row=(a,b)=>`<span>${a}</span><span>${b}</span>`;if(!p){$('xr').innerHTML=row('Status','Load a page or run traceroute to track a packet');return}
+const sp=p.sess?40000+p.sess.id:33434,dp=p.k==='DNS'?53:p.k==='ICMP'?0:443,ip=n=>NS[n][4].split(' ')[0],np=50000+(p.sess?p.sess.id:0);let src,dst;
+if(p.src==='PC'){src=p.nat?'203.0.113.7:'+np:'192.168.1.20:'+sp;dst=ip(p.dst)+':'+dp}else{src=ip(p.src)+':'+dp;dst=p.dst==='PC'?(p.nat===0?'192.168.1.20:'+sp:'203.0.113.7:'+np):ip(p.dst)+':'+sp}
+const nat=(p.src==='PC'||p.dst==='PC')?(p.nat===1?'source rewritten 192.168.1.20 to 203.0.113.7 by home router':p.nat===0?'destination rewritten back to 192.168.1.20':'not yet translated'):'not applicable';
+$('xr').innerHTML=row('Protocol',p.sess?p.sess.steps[p.step].proto:'ICMP echo (TTL probe '+p.tr.i+')')+row('Source',src)+row('Destination',dst)+row('TTL',p.ttl+' (minus 1 per router)')+row('Router hops',p.hops)+row('Size',p.sz+' bytes (bigger packets take longer to serialize)')+row('Status',p.st||'-')+row('NAT',nat)}
+function step(dt){
+ tm+=dt;rt+=dt;
+ bgacc+=dt*+$('bg').value;while(bgacc>=1){bgacc--;S.sent++;enqueue('ISP',{k:'BG',src:'ISP',dst:'LB',sz:1200,ttl:64,hops:0,id:++pid})}
+ if($('au').checked){autoT+=dt;if(autoT>3.2){autoT=0;load()}}
+ for(let i=sched.length-1;i>=0;i--)if(sched[i].at<=tm){const f=sched[i].fn;sched.splice(i,1);f()}
+ const base=1/+$('cp').value;
+ links.forEach(l=>l.d.forEach((d,dir)=>{if(l.down)return;const svc=base/l.cf;d.acc+=dt;
+  while(d.q.length&&d.acc>=svc*Math.max(.2,d.q[0].sz/1500)){d.acc-=svc*Math.max(.2,d.q[0].sz/1500);const p=d.q.shift();p.st='on the wire';d.fl.push({p,t:0})}
+  if(!d.q.length)d.acc=Math.min(d.acc,svc);
+  for(let i=d.fl.length-1;i>=0;i--){const x=d.fl[i];x.t+=dt/(l.ms/50);
+   if(x.t>=1){d.fl.splice(i,1);const n=dir?l.a:l.b;if(n===x.p.dst)deliver(x.p,n);else hop(x.p,n)}}}));
+ fx.forEach(f=>f.t+=dt);fx=fx.filter(f=>f.t<.6);
+ if(rt>.4){rt=0;route()}
+}
+function rrect(x,y,w,h,r){cx.beginPath();cx.moveTo(x+r,y);cx.arcTo(x+w,y,x+w,y+h,r);cx.arcTo(x+w,y+h,x,y+h,r);cx.arcTo(x,y+h,x,y,r);cx.arcTo(x,y,x+w,y,r);cx.closePath()}
+function draw(){
+ cx.setTransform(2,0,0,2,0,0);cx.clearRect(0,0,W,H);cx.fillStyle='#0f172a';cx.fillRect(0,0,W,H);
+ [[10,300,'HOME NETWORK'],[310,480,'ISP · AS 64500'],[490,850,'INTERNET CORE · TRANSIT ASes'],[860,1270,'DATACENTER · AS 64510']].forEach(([a,b,t])=>{
+  rrect(a,18,b-a-10,H-36,14);cx.fillStyle='rgba(148,163,184,.05)';cx.fill();cx.strokeStyle='rgba(148,163,184,.18)';cx.lineWidth=1;cx.stroke();
+  cx.fillStyle='#64748b';cx.font='600 11px system-ui';cx.textAlign='left';cx.fillText(t,a+14,40)});
+ const hot=new Set(),pp=path('PC','S1');for(let i=0;i<pp.length-1;i++)hot.add(lb(pp[i],pp[i+1]));
+ links.forEach(l=>{
+  const a=px(l.a),b=px(l.b),u=Math.max(l.d[0].q.length,l.d[1].q.length)/QMAX,act=l.d[0].fl.length+l.d[1].fl.length>0;
+  cx.setLineDash([]);if(hot.has(l)&&!l.down){cx.strokeStyle='rgba(96,165,250,.22)';cx.lineWidth=11;cx.beginPath();cx.moveTo(a[0],a[1]);cx.lineTo(b[0],b[1]);cx.stroke()}
+  cx.lineWidth=3;cx.strokeStyle=l.down?'#ef4444':u>.7?'#ef4444':u>.3?'#f59e0b':act?'#22c55e':'#475569';
+  if(l.down)cx.setLineDash([7,6]);cx.beginPath();cx.moveTo(a[0],a[1]);cx.lineTo(b[0],b[1]);cx.stroke();cx.setLineDash([]);
+  const mx=(a[0]+b[0])/2,my=(a[1]+b[1])/2,lab=l.down?'CUT':`${l.ms} ms · ${Math.round(+$('cp').value*l.cf)} pkt/s`;
+  cx.font='10px ui-monospace,monospace';cx.textAlign='center';const w=cx.measureText(lab).width+8;
+  rrect(mx-w/2,my-17,w,14,4);cx.fillStyle='#0f172a';cx.fill();cx.fillStyle=l.down?'#f87171':'#94a3b8';cx.fillText(lab,mx,my-7);
+  l.d.forEach((d,dir)=>{const s=dir?b:a,e=dir?a:b,len=Math.hypot(e[0]-s[0],e[1]-s[1]),ux=(e[0]-s[0])/len,uy=(e[1]-s[1])/len,sg=dir?-1:1,nx=-uy*sg,ny=ux*sg;
+   if(d.fl.length){cx.strokeStyle='rgba(255,255,255,.35)';cx.lineWidth=1.5;cx.setLineDash([3,9]);cx.lineDashOffset=-tm*40;cx.beginPath();cx.moveTo(s[0]+nx*6,s[1]+ny*6);cx.lineTo(e[0]+nx*6,e[1]+ny*6);cx.stroke();cx.setLineDash([]);cx.lineDashOffset=0}d.fl.forEach(x=>{const r=3.5+x.p.sz/1500*4,X=t=>s[0]+(e[0]-s[0])*t+nx*6,Y=t=>s[1]+(e[1]-s[1])*t+ny*6;for(let k=3;k>=0;k--){const tt=Math.max(0,x.t-k*.018);cx.globalAlpha=k?.18:1;cx.fillStyle=KC[x.p.k];cx.beginPath();cx.arc(X(tt),Y(tt),r-k*.6,0,7);cx.fill()}cx.globalAlpha=1;if(x.p===trk){cx.strokeStyle='#fff';cx.lineWidth=2;cx.beginPath();cx.arc(X(x.t),Y(x.t),r+4,0,7);cx.stroke()}});
+   d.q.forEach((p,i)=>{cx.fillStyle=KC[p.k];cx.fillRect(s[0]+ux*(62+i*6)+nx*13-2.5,s[1]+uy*(62+i*6)+ny*13-2.5,5,5)})});
+ });
+ ids.forEach(n=>{const[x,y,nm,ro,ip,ty]=NS[n],c=TC[ty];
+  rrect(x-50,y-25,100,50,8);cx.fillStyle='#1e293b';cx.fill();cx.lineWidth=n===sel?2.5:1;cx.strokeStyle=n===sel?'#fff':'#334155';cx.stroke();
+  cx.fillStyle=c;rrect(x-50,y-25,5,50,2);cx.fill();
+  cx.textAlign='left';cx.fillStyle='#e2e8f0';cx.font='600 12px system-ui';cx.fillText(nm,x-38,y-8);
+  cx.fillStyle='#94a3b8';cx.font='10px system-ui';cx.fillText(ro,x-38,y+6);cx.fillStyle='#64748b';cx.font='9px ui-monospace,monospace';cx.fillText(ip.split(' ')[0],x-38,y+19);
+  const busy=links.some(l=>l.d.some((d,i)=>(i?l.b:l.a)===n&&(d.q.length||d.fl.length)));cx.fillStyle=busy?'#4ade80':'#334155';cx.beginPath();cx.arc(x+40,y-15,3.5,0,7);cx.fill()});
+ fx.forEach(f=>{const r=f.t*30,al=1-f.t/.6;cx.strokeStyle=f.ok?`rgba(74,222,128,${al})`:`rgba(248,113,113,${al})`;cx.lineWidth=2;cx.beginPath();cx.arc(f.x,f.y,28+r,0,7);cx.stroke()});
+}
+function ui(){
+ $('s1').textContent=S.ok;$('s2').textContent=S.fail;$('s3').textContent=S.ok?Math.round(S.load/S.ok):'–';
+ $('s4').textContent=S.sent;$('s5').textContent=S.del;$('s6').textContent=S.x;$('s7').textContent=S.rtx;xr();
+ let h='<tr><th>#</th><th>Protocol</th><th>From → To</th><th>What happens</th><th>Time</th><th></th></tr>';
+ if(!cur)h+='<tr><td colspan=6 style="color:var(--mu)">Press Load page to start a request.</td></tr>';
+ else cur.steps.forEach((t,i)=>{const st=t.fail?'<span style="color:var(--bad)">failed</span>':t.dn?'<span style="color:var(--ok)">'+Math.round(t.ms)+' ms</span>':t.on?'in flight…':'<span style="color:var(--mu)">waiting</span>';
+  h+=`<tr><td>${i+1}</td><td><span class="tag" style="color:${KC[t.k]}">${t.proto}</span></td><td>${t.a} → ${t.b}</td><td>${t.note}</td><td>${st}</td><td>${t.c>1?'×'+t.c:''}</td></tr>`});
+ $('tr').innerHTML=h;
+ const [x,y,nm,ro,ip,ty,ly,ds,c]=[...NS[sel]];let r='';
+ ['PC','DNS','AUTH','LB','S1','S2'].forEach(d=>{if(d===sel)return;const n=nh[sel][d];r+=`<tr><td>${d}</td><td>${n||'<span style="color:var(--bad)">none</span>'}</td><td>${n?Math.round(dist[d][sel]*50)+' ms':'∞'}</td></tr>`});
+ $('ins').innerHTML=`<h3 style="color:${TC[ty]}">${nm}</h3><div style="color:var(--mu)">${ro}</div><p>${ds}</p>
+ <div class="kv"><span>Address</span><span>${ip}</span><span>OSI layers</span><span>${ly}</span><span>Forwarded</span><span>${NS[sel][8].fwd} packets</span><span>Dropped here</span><span>${NS[sel][8].drops} packets</span></div>
+ <h2 style="margin-top:12px">Forwarding table (next hop by shortest path)</h2><table><tr><th>To</th><th>Next hop</th><th>Cost</th></tr>${r}</table>`;
+}
+cv.addEventListener('click',e=>{
+ const r=cv.getBoundingClientRect(),x=(e.clientX-r.left)*W/r.width,y=(e.clientY-r.top)*H/r.height;
+ const n=ids.find(i=>Math.abs(px(i)[0]-x)<52&&Math.abs(px(i)[1]-y)<27);if(n){sel=n;ui();return}
+ let best=null,bd=9;links.forEach(l=>{const a=px(l.a),b=px(l.b),dx=b[0]-a[0],dy=b[1]-a[1],t=Math.max(0,Math.min(1,((x-a[0])*dx+(y-a[1])*dy)/(dx*dx+dy*dy))),d=Math.hypot(a[0]+dx*t-x,a[1]+dy*t-y);if(d<bd){bd=d;best=l}});
+ if(best)setDown(best,!best.down);
+});
+const cap=t=>$('cap').textContent=t;
+function hard(){demoT.forEach(clearTimeout);demoT=[];cap('');$('log').innerHTML='';tm=0;autoT=0;init();ui()}
+$('load').onclick=load;$('trc').onclick=trace;$('reset').onclick=hard;
+$('pause').onclick=e=>{paused=!paused;e.target.textContent=paused?'Resume':'Pause'};
+$('demo').onclick=()=>{hard();paused=false;$('pause').textContent='Pause';$('fw').checked=false;$('bg').value=0;$('au').checked=true;load();
+ const T=(ms,f)=>demoT.push(setTimeout(f,ms));
+ cap('1. A page load: DNS recursion, TCP handshake, TLS, then HTTP. The blue glow is the best path from the client to the servers.');
+ T(7000,()=>{const l=lb('T3','FW');cap('2. Cutting T3–FW, the last hop of the best path. In-flight packets are lost and TCP starts retransmitting.');setDown(l,true)});
+ T(9500,()=>cap('3. Link-state routing has converged: traffic now flows ISP > R2 > FW (higher latency, still reachable).'));
+ T(20000,()=>{cap('4. Cable restored: routers re-run SPF and the low-latency path returns.');setDown(lb('T3','FW'),false)});
+ T(26000,()=>cap('Now try: raise cross-traffic to see queues fill and drop, or tick the firewall rule to watch TLS fail.'))};
+init();load();ui();log('Topology up: 12 nodes, 14 cables.');
+let last=performance.now(),uit=0;
+(function loop(now){const dt=Math.min(.05,(now-last)/1000);last=now;if(!paused){step(dt);uit+=dt;if(uit>.25){uit=0;ui()}}draw();requestAnimationFrame(loop)})(last);
+</script></body></html>
